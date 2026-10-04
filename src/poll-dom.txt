@@ -1,0 +1,109 @@
+"use strict";
+globalThis.PollTrialDOM = (() => {
+  const text = v => String(v || "").replace(/\s+/gu, " ").trim();
+  const norm = v => text(v).normalize("NFKC").toLocaleLowerCase();
+  const voteText = v => /^(?:проголосовать|vote)$/iu.test(text(v));
+  const marker = /(?:текущий опрос|current poll|active poll)/iu;
+  const paid = /(?:vote again|vote more|additional votes?|голосовать ещё|проголосовать ещё|дополнительн\S* голос|отдать ещё|channel points|балл\S* канал|bits|битс)/iu;
+  const voted = /(?:you (?:have )?voted|vote (?:submitted|recorded)|ваш голос (?:учт[её]н|принят)|вы проголосовали)/iu;
+  const reserved = new Set(["directory", "downloads", "settings", "subscriptions", "wallet", "inventory", "search", "login", "signup", "videos", "p", "turbo", "drops"]);
+  const chatMessage = "[data-a-target='chat-line-message'],[data-test-selector='chat-line-message'],.chat-line__message";
+  function channel(url) {
+    try {
+      const u = new URL(url), p = u.pathname.split("/").filter(Boolean);
+      if (u.hostname !== "www.twitch.tv") return "";
+      const c = ((p[0] === "embed" || p[0] === "popout") && p[2] === "chat" ? p[1] : p.length === 1 ? p[0] : "") || "";
+      return /^[a-z0-9_]{1,25}$/iu.test(c) && !reserved.has(c.toLowerCase()) ? c.toLowerCase() : "";
+    } catch { return ""; }
+  }
+  function visible(el) {
+    if (!el || !el.isConnected || el.closest("[hidden],[aria-hidden='true']")) return false;
+    const s = getComputedStyle(el);
+    return s.display !== "none" && s.visibility !== "hidden" && Number(s.opacity) !== 0 && el.getClientRects().length > 0;
+  }
+  function cleanLabel(v) {
+    return text(v).replace(/\s+\d+(?:[.,]\d+)?\s*%\s*(?:\([\d\s.,]+\))?\s*$/u, "").trim();
+  }
+  function option(el) {
+    let target = el, label = "";
+    if (el.matches("input[type='radio']")) {
+      const labels = Array.from(el.labels || []);
+      const l = labels.find(visible);
+      if (l) { target = l; label = l.textContent; }
+    }
+    if (!visible(target)) return null;
+    if (!label && el.getAttribute("aria-labelledby")) {
+      label = el.getAttribute("aria-labelledby").split(/\s+/u).map(id => el.ownerDocument.getElementById(id)?.textContent || "").join(" ");
+    }
+    label = cleanLabel(label || el.getAttribute("aria-label") || el.textContent);
+    return label ? { el, target, label } : null;
+  }
+  function options(root) {
+    const selectors = "input[type='radio'],[role='radio'],[data-test-selector='poll-choice'],[data-a-target='poll-choice']";
+    const raw = Array.from(root.querySelectorAll(selectors));
+    // Prefer native inputs if a custom radio wrapper contains the same control.
+    return raw.filter(el => !raw.some(other => other !== el && el.contains(other)))
+      .map(option).filter(Boolean);
+  }
+  function title(root) {
+    const selectors = "[data-test-selector*='poll-title'],[data-a-target*='poll-title'],h1,h2,h3,h4,[role='heading'],strong,p";
+    const candidates = Array.from(root.querySelectorAll(selectors)).filter(el => visible(el) && !el.closest("button,label,[role='radio']"));
+    return text(candidates.find(el => !marker.test(text(el.textContent)))?.textContent || "Опрос Twitch").slice(0, 200);
+  }
+  function find(doc = document) {
+    const results = [];
+    const buttons = Array.from(doc.querySelectorAll("button,[role='button']"))
+      .filter(el => visible(el) && !el.closest(chatMessage) && voteText(el.textContent || el.getAttribute("aria-label")));
+    for (const button of buttons) {
+      let root = button.parentElement;
+      for (let depth = 0; root && root !== doc.body && depth < 10; depth++, root = root.parentElement) {
+        if (text(root.textContent).length > 3500 || root.querySelector(chatMessage)) break;
+        const opts = options(root);
+        if (opts.length < 2 || opts.length > 5) continue;
+        const hasMarker = marker.test(text(root.textContent)) ||
+          [root, ...root.querySelectorAll("[data-test-selector],[data-a-target]")].some(el =>
+            /poll/iu.test((el.getAttribute("data-test-selector") || "") + " " + (el.getAttribute("data-a-target") || "")));
+        if (!hasMarker) continue;
+        if (!results.some(x => x.root === root)) results.push({ root, button, options: opts, title: title(root) });
+        break;
+      }
+    }
+    return results.length === 1 ? results[0] : null;
+  }
+  const signature = poll => JSON.stringify([poll.title, poll.options.map(x => norm(x.label))]);
+  const disabled = el => el.matches(":disabled") || el.getAttribute("aria-disabled") === "true";
+  function selected(opt) {
+    return opt.el.checked === true || opt.el.getAttribute("aria-checked") === "true" ||
+      opt.el.getAttribute("data-state") === "checked";
+  }
+  function blocker(poll, doc = document) {
+    if (paid.test(text(poll.root.textContent))) return "В виджете упомянуты дополнительные голоса или баллы. Автоматическая отправка остановлена.";
+    if (voted.test(text(poll.root.textContent))) return "Этот аккаунт уже проголосовал.";
+    if (Array.from(doc.querySelectorAll("[role='dialog'],dialog[open]")).some(visible)) return "Открыто диалоговое окно. Автоматическая отправка остановлена.";
+    if (Array.from(doc.querySelectorAll("[data-a-target='login-button']")).some(visible)) return "Сначала войди в Twitch в этом профиле браузера.";
+    return "";
+  }
+  function diagnostic(doc = document) {
+    const poll = find(doc);
+    let root = poll?.root;
+    if (!root) {
+      const label = Array.from(doc.querySelectorAll("p,span,h2,h3,div"))
+        .find(el => visible(el) && !el.closest(chatMessage) && /^(?:текущий опрос|current poll|active poll)$/iu.test(text(el.textContent)));
+      let candidate = label;
+      for (let i = 0; candidate && candidate !== doc.body && i < 6; i++, candidate = candidate.parentElement) {
+        if (text(candidate.textContent).length > 3500 || candidate.querySelector(chatMessage)) break;
+        if (candidate.querySelectorAll("button,[role='button'],input").length >= 2) { root = candidate; break; }
+      }
+    }
+    // Only the poll subtree: no cookies, HTML, tokens, chat messages or input values.
+    return { version: "0.1.0", channel: channel(location.href), found: !!poll,
+      title: poll?.title || "", choices: poll?.options.map(x => x.label) || [],
+      elements: root ? [root, ...root.querySelectorAll("*")].slice(0, 120).map(el => ({
+        tag: el.tagName.toLowerCase(), role: el.getAttribute("role"), type: el.getAttribute("type"),
+        selector: el.getAttribute("data-test-selector") || el.getAttribute("data-a-target"),
+        text: el.children.length ? undefined : text(el.textContent).slice(0, 120),
+        visible: visible(el), disabled: disabled(el)
+      })) : [] };
+  }
+  return { text, norm, channel, find, signature, disabled, selected, blocker, visible, voted, diagnostic };
+})();

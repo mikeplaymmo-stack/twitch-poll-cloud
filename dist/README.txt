@@ -1,0 +1,1 @@
+worker.mjs — собранный модуль. Для развёртывания всё равно нужны Browser binding BROWSER, Durable Object PANEL / PollPanel, миграция v1 и секреты. Предпочтительный способ: wrangler.jsonc и npm run deploy.

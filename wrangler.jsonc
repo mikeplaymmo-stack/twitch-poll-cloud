@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "twitch-poll-cloud",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "browser": { "binding": "BROWSER" },
+  "durable_objects": { "bindings": [{ "name": "PANEL", "class_name": "PollPanel" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PollPanel"] }],
+  "rules": [{ "type": "Text", "globs": ["**/*.html", "**/*.css", "**/*.txt"], "fallthrough": true }],
+  "observability": { "enabled": false }
+}

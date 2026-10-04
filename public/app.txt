@@ -1,0 +1,96 @@
+'use strict';
+const $=id=>document.getElementById(id);
+let csrf='',state={accounts:[],job:null},selected=new Set(),weights=[50,50],labels=['',''],busy=false,dialogLogin='',dialogMode='login',toastTimer,refreshing=false,restoredJob='';
+const active=()=>['watching','voting'].includes(state.job?.status);
+const statusNames={watching:'Ожидание',voting:'Голосование',finished:'Завершено',stopped:'Остановлено',expired:'Лимит времени',interrupted:'Прервано',error:'Ошибка',skipped:'Пропущено',queued:'В очереди',preparing:'Подготовка',sending:'Отправка',confirmed:'Подтверждено',uncertain:'Не подтверждено',failed:'Не отправлено'};
+function node(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
+function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,7000);}
+async function api(path,data){
+  const response=await fetch('/api/'+path,{method:data===undefined?'GET':'POST',headers:data===undefined?{}:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:data===undefined?undefined:JSON.stringify(data)});
+  const value=await response.json();
+  if(!response.ok){if(response.status===401&&path!=='login')showLogin();throw new Error(value.error||'Не удалось выполнить запрос.');}return value;
+}
+function showLogin(){$('app').hidden=true;$('login-screen').hidden=false;csrf='';}
+function apply(s){state=s;const ready=new Set(s.accounts.filter(a=>a.verifiedAt).map(a=>a.login));selected=new Set([...selected].filter(l=>ready.has(l)));
+  if(active()&&s.job.id!==restoredJob){const c=s.job.config;restoredJob=s.job.id;weights=[...c.weights];labels=[...c.labels];selected=new Set(c.logins);$('channel').value=c.channel;$('participation').value=c.participation;$('max-minutes').value=c.maxMinutes;$('vote-seconds').value=c.voteSeconds;$('concurrency').value=c.concurrency;$('current').checked=c.current;$('repeat').checked=c.repeat;$('question').value=c.title;ratios();}
+  renderAccounts();renderJob();preview();}
+async function refresh(){if(!csrf||refreshing)return;refreshing=true;try{apply(await api('state'));}catch(e){toast(e.message);}finally{refreshing=false;}}
+async function action(fn){if(busy)return;busy=true;updateButtons();try{await fn();}catch(e){toast(e.message);}finally{busy=false;updateButtons();}}
+function accountButton(label,fn){const b=node('button',label,'ghost');b.type='button';b.disabled=active()||busy;b.onclick=()=>action(fn);return b;}
+function renderAccounts(){
+  const list=$('accounts');list.replaceChildren();$('account-count').textContent=state.accounts.length;
+  if(!state.accounts.length){const d=node('div','Добавь первый аккаунт','empty');d.append(node('br'),node('small','Затем нажми «Войти в Twitch».'));list.append(d);}
+  for(const a of state.accounts){
+    const row=node('div',undefined,'account-row'),top=node('div',undefined,'account-top'),check=document.createElement('input');check.type='checkbox';check.checked=selected.has(a.login);check.disabled=!a.verifiedAt||active();check.setAttribute('aria-label','Выбрать '+a.login);check.onchange=()=>{check.checked?selected.add(a.login):selected.delete(a.login);preview();};
+    top.append(check,node('strong',a.login),node('span',a.verifiedAt?'Вход сохранён':'Нет входа','account-status'+(a.verifiedAt?' ready':'')));
+    const buttons=node('div',undefined,'account-actions');buttons.append(accountButton(a.verifiedAt?'Войти заново':'Войти в Twitch',()=>openAccount(a.login,'login')));
+    if(a.verifiedAt)buttons.append(accountButton('Проверить канал',()=>openAccount(a.login,'inspect')));
+    buttons.append(accountButton('✕',async()=>{if(!confirm('Удалить '+a.login+' и его сохранённую сессию?'))return;apply(await api('remove',{login:a.login}));}));row.append(top,buttons);list.append(row);
+  }
+  updateButtons();
+}
+function ratios(){
+  const box=$('ratios');box.replaceChildren();weights.forEach((w,i)=>{
+    const row=node('div',undefined,'ratio-row'),n=node('span',String(i+1),'option-number'),wrap=node('div',undefined,'percent-input');
+    const input=document.createElement('input');input.type='number';input.min='0';input.max='100';input.step='1';input.value=w;input.setAttribute('aria-label','Процент для варианта '+(i+1));input.oninput=()=>{weights[i]=Number(input.value);preview();};wrap.append(input,node('span','%'));
+    const answer=document.createElement('input');answer.placeholder='Текст ответа (необязательно)';answer.maxLength=200;answer.value=labels[i]||'';answer.setAttribute('aria-label','Точный текст ответа '+(i+1));answer.oninput=()=>labels[i]=answer.value;
+    const remove=node('button','×','remove-option');remove.type='button';remove.setAttribute('aria-label','Удалить вариант '+(i+1));remove.disabled=weights.length<=2;remove.onclick=()=>{weights.splice(i,1);labels.splice(i,1);ratios();};row.append(n,wrap,answer,remove);box.append(row);
+  });preview();
+}
+function selectedCount(){return [...selected].filter(l=>state.accounts.some(a=>a.login===l&&a.verifiedAt)).length;}
+function countsFor(n){const raw=weights.map(w=>n*w/100),counts=raw.map(Math.floor);const order=raw.map((w,i)=>({i,f:w-counts[i]})).sort((a,b)=>b.f-a.f);for(let i=0,left=n-counts.reduce((a,b)=>a+b,0);i<left&&i<order.length;i++)counts[order[i].i]++;return counts;}
+function preview(){
+  const sum=weights.reduce((a,b)=>a+b,0),valid=weights.every(w=>Number.isFinite(w)&&w>=0&&w<=100)&&Math.abs(sum-100)<.00001;
+  $('sum').textContent=(Number.isFinite(sum)?sum.toFixed(2).replace(/\.00$/,''):'—')+'%';$('sum').classList.toggle('invalid',!valid);
+  const p=Number($('participation').value),total=selectedCount(),count=Math.round(total*p/100);$('participation-value').textContent=p+'%';$('selected-count').textContent=total+' выбрано';
+  $('preview').textContent=!valid?'Сумма процентов должна быть 100.':!total?'Выбери аккаунты слева.':count===0?'Получается 0 участников. Увеличь долю.':count+' из '+total+' аккаунтов · примерно '+countsFor(count).map((n,i)=>(i+1)+': '+n).join(' / ')+' голосов';
+  const bar=$('distribution');bar.replaceChildren();for(const w of weights){const s=node('span');s.style.width=Math.max(0,Math.min(100,w||0))+'%';bar.append(s);}
+  $('select-all').checked=state.accounts.some(a=>a.verifiedAt)&&state.accounts.filter(a=>a.verifiedAt).every(a=>selected.has(a.login));
+  updateButtons();
+}
+function updateButtons(){
+  const running=active();$('start').disabled=busy||running||!selectedCount()||Math.abs(weights.reduce((a,b)=>a+b,0)-100)>.00001;
+  $('stop').disabled=!running&&!state.browserStartedAt;$('add-option').disabled=weights.length>=5||running;
+  for(const e of document.querySelectorAll('.settings-card input,.settings-card select,.ratio-actions button,.remove-option,#add-form input,#add-form textarea,#add-form button,#select-all'))e.disabled=running||busy;
+  $('add-option').disabled=weights.length>=5||running||busy;
+  document.querySelectorAll('.remove-option').forEach(b=>b.disabled=weights.length<=2||running||busy);
+  document.querySelectorAll('.account-actions button').forEach(b=>b.disabled=running||busy);
+}
+function renderJob(){
+  const j=state.job,running=active();$('cloud-badge').textContent=state.browserStartedAt?'Браузер работает':'Браузер выключен';$('cloud-badge').classList.toggle('running',!!state.browserStartedAt);
+  $('job-status').textContent=j?statusNames[j.status]||j.status:'Нет запуска';$('job-status').classList.toggle('running',running);$('job-message').textContent=j?.message||'Добавь аккаунты, сохрани вход и настрой ответы.';
+  $('job-poll').replaceChildren();if(j?.poll)$('job-poll').append(node('div',j.poll.title,'poll-title'));
+  $('job-progress').replaceChildren();if(j?.rows?.length)$('job-progress').append(node('div',j.rows.filter(r=>r.status==='confirmed').length+' подтверждено · '+j.rows.filter(r=>r.status==='uncertain').length+' без подтверждения · '+j.rows.length+' участников','progress-text'));
+  $('results').replaceChildren();$('result-table').hidden=!j?.rows?.length;
+  for(const r of j?.rows||[]){const tr=node('tr'),result=node('td',statusNames[r.status]||r.status,'result-'+r.status);result.append(node('small',r.message));tr.append(node('td',r.login),node('td',(r.choice+1)+'. '+r.answer),result);$('results').append(tr);}
+  $('history').replaceChildren();for(const h of j?.history||[])$('history').append(node('div',h.title+' · '+h.confirmed+' / '+h.total+' подтверждено','history-item'));
+  if(running){const left=Math.max(0,Math.ceil((j.deadline-Date.now())/60000));$('job-status').textContent+=' · до '+left+' мин';}
+}
+async function openAccount(login,mode){
+  dialogLogin=login;dialogMode=mode;$('dialog-title').textContent=(mode==='inspect'?'Проверка канала · ':'Вход · ')+login;$('dialog-error').textContent='';
+  const data=await api(mode==='inspect'?'account/inspect':'account/login',{login,channel:$('channel').value.trim()});
+  const url=new URL(data.url);if(url.protocol!=='https:'||url.hostname!=='live.browser.run')throw new Error('Некорректная ссылка Cloudflare.');
+  $('live-link').href=url.href;$('save-login').hidden=mode==='inspect';$('login-dialog').showModal();await refresh();
+}
+async function boot(){try{const s=await api('session');csrf=s.csrf;$('login-screen').hidden=true;$('app').hidden=false;apply(await api('state'));importFragment();}catch(e){showLogin();if(!e.message.includes('Войди'))$('login-error').textContent=e.message;}}
+function importFragment(){
+  if(!location.hash.startsWith('#import='))return;let data;
+  try{data=JSON.parse(decodeURIComponent(location.hash.slice(8)));}catch{toast('Не удалось прочитать импорт.');return;}finally{history.replaceState(null,'',location.pathname);}
+  if(typeof data.channel==='string')$('channel').value=data.channel;
+  if(Array.isArray(data.logins)){$('logins').value=data.logins.filter(l=>typeof l==='string'&&/^[a-z0-9_]{1,25}$/i.test(l)).join(', ');toast('Логины перенесены. Нажми «Добавить аккаунты» и сохрани вход для каждого.');}
+}
+$('login-form').onsubmit=async e=>{e.preventDefault();$('login-error').textContent='';try{await api('login',{password:$('password').value});$('password').value='';await boot();}catch(e){$('login-error').textContent=e.message;}};
+$('logout').onclick=()=>action(async()=>{await api('logout',{});showLogin();});
+$('add-form').onsubmit=e=>{e.preventDefault();action(async()=>{const logins=$('logins').value.split(/[\s,;]+/).filter(Boolean);apply(await api('add',{logins}));$('logins').value='';});};
+$('select-all').onchange=e=>{selected=e.target.checked?new Set(state.accounts.filter(a=>a.verifiedAt).map(a=>a.login)):new Set();renderAccounts();preview();};
+$('participation').oninput=preview;
+$('add-option').onclick=()=>{if(weights.length<5){weights.push(0);labels.push('');ratios();}};
+$('equal').onclick=()=>{weights=weights.map(()=>Math.floor(100/weights.length));weights[0]+=100-weights.reduce((a,b)=>a+b,0);ratios();};
+$('random').onclick=()=>{const values=weights.map(()=>crypto.getRandomValues(new Uint32Array(1))[0]+1),sum=values.reduce((a,b)=>a+b,0);weights=values.map(v=>Math.floor(v/sum*100));weights[0]+=100-weights.reduce((a,b)=>a+b,0);ratios();};
+$('start').onclick=()=>action(async()=>{apply(await api('start',{channel:$('channel').value.trim(),logins:[...selected],weights,labels,participation:Number($('participation').value),maxMinutes:Number($('max-minutes').value),voteSeconds:Number($('vote-seconds').value),concurrency:Number($('concurrency').value),current:$('current').checked,repeat:$('repeat').checked,title:$('question').value}));});
+$('stop').onclick=async()=>{try{apply(await api('stop',{}));toast('Остановка запрошена.');}catch(e){toast(e.message);}};
+$('save-login').onclick=async()=>{const b=$('save-login');b.disabled=true;$('dialog-error').textContent='';try{apply(await api('account/save',{login:dialogLogin}));selected.add(dialogLogin);$('login-dialog').close();renderAccounts();preview();toast('Вход проверен и сохранён.');}catch(e){$('dialog-error').textContent=e.message;}finally{b.disabled=false;}};
+$('refresh-link').onclick=()=>action(()=>openAccount(dialogLogin,dialogMode));
+$('close-login').onclick=()=>action(async()=>{apply(await api('account/close',{}));$('login-dialog').close();});
+$('dialog-x').onclick=()=>{$('login-dialog').close();toast('Окно в облаке остаётся открытым до лимита. Нажми «Остановить», чтобы закрыть его.');};
+ratios();boot();setInterval(refresh,4000);

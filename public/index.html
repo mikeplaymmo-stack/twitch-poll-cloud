@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Опросы · облачная панель</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script></head>
+<body>
+<div id="login-screen" class="login-screen"><form id="login-form" class="card login-card"><div class="brand-mark">%</div><p class="eyebrow">TWITCH · CLOUD PANEL</p><h1>Твои аккаунты.<br>Одна панель.</h1><p class="muted">Войди, чтобы управлять облачными сессиями и опросами.</p><label>Пароль панели<input id="password" type="password" autocomplete="current-password" required></label><button class="primary full" type="submit">Войти в панель</button><p id="login-error" role="alert" class="error"></p><small>Версия 0.3 · требуется проверка на Twitch</small></form></div>
+<div id="app" hidden>
+  <header><div class="wordmark"><span class="brand-mark small">%</span><div><strong>Панель опросов</strong><span>Твои аккаунты · облачный запуск</span></div></div><div class="header-actions"><span id="cloud-badge" class="badge">Браузер выключен</span><button id="logout" class="ghost">Выйти</button></div></header>
+  <main>
+    <section class="intro"><div><p class="eyebrow">УПРАВЛЕНИЕ ГОЛОСОВАНИЕМ</p><h1>Выбери соотношение.</h1><p class="muted">Настрой долю аккаунтов и ответы. После запуска панель можно закрыть.</p></div><div class="version">Пробная версия <span>0.3</span></div></section>
+    <div class="workspace">
+      <aside class="card accounts-card"><div class="section-heading"><h2>Аккаунты</h2><span id="account-count" class="count">0</span></div><p class="muted small-text">Каждый аккаунт входит в отдельную облачную сессию.</p>
+        <form id="add-form"><label for="logins">Логины Twitch</label><textarea id="logins" rows="2" placeholder="login_1, login_2, login_3" spellcheck="false" required></textarea><button class="secondary full" type="submit">+ Добавить аккаунты</button></form>
+        <div class="select-line"><label><input id="select-all" type="checkbox"> Выбрать готовые</label><span id="selected-count">0 выбрано</span></div>
+        <div id="accounts" class="account-list"><div class="empty">Добавь первый аккаунт<br><small>Затем нажми «Войти в Twitch».</small></div></div>
+        <div class="account-foot">До 50 аккаунтов · один браузер<br>Вход выполняется вручную через Cloudflare Live View.</div>
+      </aside>
+      <div class="main-column">
+        <section class="card settings-card"><div class="section-heading"><h2>Настройки опроса</h2><span class="pill">Проценты твоих голосов</span></div>
+          <label class="channel-label">Канал Twitch<div class="input-prefix"><span>twitch.tv/</span><input id="channel" placeholder="имя_канала" autocomplete="off" spellcheck="false"></div></label>
+          <div class="section-heading ratio-heading"><h3>Соотношение голосования</h3><span id="sum" class="sum">100%</span></div>
+          <p class="muted small-text">Номера соответствуют порядку ответов в опросе сверху вниз.</p><div id="ratios"></div>
+          <div class="ratio-actions"><button id="add-option" class="secondary">+ Вариант</button><button id="equal" class="ghost">Поровну</button><button id="random" class="ghost">Случайно</button></div>
+          <div id="distribution" class="distribution" aria-label="Распределение голосов"></div><p id="preview" class="preview">Выбери аккаунты слева.</p>
+          <div class="slider-label"><label for="participation">Участников голосования</label><strong id="participation-value">100%</strong></div><input id="participation" type="range" min="1" max="100" value="100">
+          <div class="settings-grid"><label>Лимит работы, минут<input id="max-minutes" type="number" min="1" max="240" value="5"></label><label>Очередь голосов, секунд<input id="vote-seconds" type="number" min="10" max="180" value="60"></label><label>Аккаунтов одновременно<select id="concurrency"><option value="1">1 — по очереди</option><option value="2" selected>2</option><option value="3">3</option></select></label></div>
+          <details><summary>Дополнительные настройки</summary><label>Точный вопрос (необязательно)<input id="question" placeholder="Пусто — любой вопрос" maxlength="200"></label><label class="check"><input id="current" type="checkbox"> Включить уже открытый опрос</label><label class="check"><input id="repeat" type="checkbox"> Продолжать ожидание следующих опросов</label><p class="muted small-text">За один запуск одинаковые вопрос и варианты обрабатываются только один раз. У каждого варианта можно указать точный текст для дополнительной проверки.</p></details>
+          <div class="start-row"><button id="start" class="primary">▶ Запустить ожидание</button><button id="stop" class="danger">■ Остановить</button></div><p class="muted small-text footer-note">Браузер оплачивается всё время работы, включая ожидание. По достижении лимита он закроется.</p>
+        </section>
+        <section class="card results-card"><div class="section-heading"><h2>Ход голосования</h2><span id="job-status" class="badge">Нет запуска</span></div><p id="job-message" class="muted">Добавь аккаунты, сохрани вход и настрой ответы.</p><div id="job-poll"></div><div id="job-progress"></div><div class="table-wrap"><table id="result-table" hidden><thead><tr><th>Аккаунт</th><th>Ответ</th><th>Результат</th></tr></thead><tbody id="results"></tbody></table></div><div id="history"></div></section>
+      </div>
+    </div>
+    <footer>Обработка идёт в Cloudflare. Подтверждённым считается только голос с явным подтверждением Twitch.</footer>
+  </main>
+</div>
+<div id="toast" role="status" hidden></div>
+<dialog id="login-dialog"><div class="section-heading"><h2 id="dialog-title">Вход в Twitch</h2><button id="dialog-x" class="ghost" aria-label="Закрыть">✕</button></div><p>Открой облачное окно, войди в нужный аккаунт Twitch и вернись сюда.</p><a id="live-link" class="button primary full" target="_blank" rel="noopener noreferrer">Открыть облачное окно ↗</a><p class="muted small-text">Ссылка действует 5 минут. Окно закроется через 10 минут. Сохрани вход до закрытия. Не передавай ссылку другим людям.</p><div class="dialog-actions"><button id="save-login" class="primary">Я вошёл — проверить и сохранить</button><button id="refresh-link" class="secondary">Новое окно</button></div><button id="close-login" class="ghost full">Закрыть облачный браузер</button><p id="dialog-error" class="error" role="alert"></p></dialog>
+</body></html>
